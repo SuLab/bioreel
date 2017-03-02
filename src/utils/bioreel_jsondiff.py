@@ -32,6 +32,8 @@
      'taxid', 'type_of_gene', 'unigene', 'uniprot', 'wikipedia']
 
 """
+import json
+import copy
 
 # These are root keys where the value is an entity or list of entities that can be directly diffed
 SIMPLE_ENTITIES = ['APHIDBASE', 'AnimalQTLdb', 'ApiDB_CryptoDB', 'Araport', 
@@ -60,15 +62,33 @@ ALL_ITEM_ENTITIES = ['exac']
 def process_simple_list_diffs(src, dest, key, diff_id):
     # return ops for list diffs
     if not isinstance(src, list):
-        src = list(src)
+        src = [src]
     if not isinstance(dest, list):
-        dest = list(dest)
-    _src = set(src); _dest = set(dest)
+        dest = [dest]
     _diffs = []
-    for item in _src.difference(_dest):
-        _diffs.append({'op': 'remove', 'path': key, 'item': item, 'diff': diff_id})
-    for item in _dest.difference(_src):
-        _diffs.append({'op': 'add', 'path': key, 'item': item, 'diff': diff_id})
+    if len(src) and isinstance(src[0], dict):
+        src = [json.dumps(d, sort_keys=True) for d in src]
+        dest = [json.dumps(d, sort_keys=True) for d in dest]
+        _src = set(src); _dest = set(dest)
+        for item in _src.difference(_dest):
+            _diffs.append({'op': 'remove', 'path': key, 'item': json.loads(item), 'diff': diff_id})
+        for item in _dest.difference(_src):
+            _diffs.append({'op': 'add', 'path': key, 'item': json.loads(item), 'diff': diff_id})
+    elif len(src) and isinstance(src[0], list):
+        src = [tuple(d) for d in src]
+        dest = [tuple(d) for d in dest]
+        _src = set(src); _dest = set(dest)
+        for item in _src.difference(_dest):
+            _diffs.append({'op': 'remove', 'path': key, 'item': list(item), 'diff': diff_id})
+        for item in _dest.difference(_src):
+            _diffs.append({'op': 'add', 'path': key, 'item': list(item), 'diff': diff_id})
+    else:
+        _src = set(src); _dest = set(dest)
+        _diffs = []
+        for item in _src.difference(_dest):
+            _diffs.append({'op': 'remove', 'path': key, 'item': item, 'diff': diff_id})
+        for item in _dest.difference(_src):
+            _diffs.append({'op': 'add', 'path': key, 'item': item, 'diff': diff_id})
     return _diffs
 
 def process_all_item_entity_diffs(src, dest, key, diff_id):
@@ -79,9 +99,11 @@ def process_all_item_entity_diffs(src, dest, key, diff_id):
     
     def _get_dest(dot):
         fields = dot.split('.')[1:]
-        _ret = dest
+        _ret = copy.deepcopy(dest)
         for field in fields:
-            _ret = _ret[field]
+            _ret = []
+            if field != 'pRec' or field != 'p_rec':
+                _ret = _ret[field]
         return _ret
 
     def _traverse(d, _path):
@@ -89,7 +111,7 @@ def process_all_item_entity_diffs(src, dest, key, diff_id):
             for (k,v) in d.items():
                 _traverse(v, _path + '.' + k)
         else:
-            _diffs.extend(process_simple_list_diffs(d, _get_dest(d), _path, diff_id))
+            _diffs.extend(process_simple_list_diffs(d, _get_dest(_path), _path, diff_id))
 
     _traverse(src, key)
     return _diffs
@@ -103,6 +125,7 @@ def mygene_diff(src, dest, diff_id):
 
     # do the top level keys in both:
     for key in src_keys.intersection(dest_keys):
+        print("***************\nStarting root key: {}".format(key))
         src_val = src[key]; dest_val = dest[key]
         # Do simple entities
         if key in SIMPLE_ENTITIES:
@@ -124,8 +147,8 @@ def mygene_diff(src, dest, diff_id):
             # in dest but not in src (add)
             for subkey in dest_subkeys.difference(src_subkeys):
                 diffs.append({'op': 'add', 'path': key + '.' + subkey, 'item': dest_val[subkey], 'diff': diff_id})
-        elif key in ALL_ITEM_ENTITIES:
-            diffs.extend(process_all_item_entity_diffs(src_val, dest_val, key, diff_id))
+        #elif key in ALL_ITEM_ENTITIES:
+        #    diffs.extend(process_all_item_entity_diffs(src_val, dest_val, key, diff_id))
 
     # do top level keys in src but not in dest (full key delete)
     for key in src_keys.difference(dest_keys):
